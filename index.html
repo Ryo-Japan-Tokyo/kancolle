@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>KanColle Ship Asset Viewer</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/blueimp-md5/2.19.0/js/md5.min.js"></script>
+    <style>
+        body { font-family: sans-serif; display: flex; flex-direction: column; align-items: center; padding: 40px; background-color: #f4f4f9; }
+        .controls { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+        select, button { padding: 10px; margin: 5px; cursor: pointer; }
+        #displayArea { margin-top: 30px; text-align: center; }
+        img { max-width: 100%; height: auto; border: 3px solid #fff; box-shadow: 0 4px 10px rgba(0,0,0,0.2); }
+        .url-box { margin-top: 15px; font-size: 0.9em; color: #555; word-break: break-all; background: #eee; padding: 10px; border-radius: 4px; }
+    </style>
+</head>
+<body>
+
+    <h2>KanColle Ship Asset Viewer</h2>
+
+    <div class="controls">
+        <select id="shipSelect"></select>
+        <select id="typeSelect">
+            <option value="Card">Card</option>
+            <option value="Full">Full</option>
+            <option value="Banner">Banner</option>
+        </select>
+        <select id="versionSelect">
+            <option value="">正常 (Normal)</option>
+            <option value="_Damaged">中破 (Damaged)</option>
+            <option value="_Kai">改 (Kai)</option>
+            <option value="_Kai_Damaged">改中破 (Kai Damaged)</option>
+            <option value="_Kai_Ni">改二 (Kai Ni)</option>
+            <option value="_Kai_Ni_Damaged">改二中破 (Kai Ni Damaged)</option>
+        </select>
+        <button id="goBtn">Go</button>
+    </div>
+
+    <div id="displayArea"></div>
+
+    <script>
+        const JSON_URL = 'https://raw.githubusercontent.com/KC3Kai/kc3-translations/master/data/en/ships.json';
+
+        async function init() {
+            try {
+                const response = await fetch(JSON_URL);
+                const data = await response.json();
+                const select = document.getElementById('shipSelect');
+                for (const jaName in data) {
+                    let opt = document.createElement('option');
+                    opt.value = data[jaName].replace(/ /g, "_");
+                    opt.innerHTML = jaName;
+                    select.appendChild(opt);
+                }
+            } catch (e) { alert("Could not load ship list."); }
+        }
+
+        document.getElementById('goBtn').addEventListener('click', async () => {
+            const engName = document.getElementById('shipSelect').value;
+            const type = document.getElementById('typeSelect').value;
+            const suffix = document.getElementById('versionSelect').value;
+            
+            const fileName = `Ship_${type}_${engName}${suffix}.png`;
+            const hash = md5(fileName);
+            const url = `https://yksk.kancollewiki.net/w/images/${hash[0]}/${hash.substring(0, 2)}/${fileName}`;
+            
+            const displayArea = document.getElementById('displayArea');
+            displayArea.innerHTML = "Checking for asset...";
+
+            try {
+                const response = await fetch(url, { method: 'HEAD' });
+                if (response.ok) {
+                    displayArea.innerHTML = `
+                        <img src="${url}">
+                        <div class="url-box"><strong>Real URL:</strong><br>${url}</div>
+                    `;
+                } else {
+                    displayArea.innerHTML = `<p style="color:red;">Asset not found for this version.</p>`;
+                }
+            } catch (e) {
+                displayArea.innerHTML = `<p style="color:red;">Error connecting to Wiki.</p>`;
+            }
+        });
+
+        init();
+    </script>
+</body>
+</html>
