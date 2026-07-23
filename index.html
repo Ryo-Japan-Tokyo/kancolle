@@ -70,7 +70,7 @@
         }
 
         async function openGeminiWallpaper(imageUrl) {
-            const promptText = `Generate a high-quality vertical 9:16 iPhone wallpaper inspired by this KanColle ship character image: ${imageUrl}. Ensure the character is framed centered and fits a phone screen cleanly.`;
+const promptText = `I am attaching a KanColle character image: ${imageUrl}. Do NOT redraw, alter, or edit the character artwork itself. Keep the character's line art, colors, and design completely intact as a foreground cutout. Generate a high-resolution 9:16 vertical smartphone background behind the character (e.g. dramatic ocean seascape at sunset) and composite them seamlessly.`;
             
             // 1. Copy prompt to clipboard as fallback
             try {
