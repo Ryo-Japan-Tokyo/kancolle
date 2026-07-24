@@ -40,7 +40,6 @@
             box-shadow: 0 2px 6px rgba(0,0,0,0.15);
         }
         .btn-wallpaper:hover { opacity: 0.95; }
-        .loading-text { font-size: 12px; color: #007aff; }
     </style>
 </head>
 <body>
@@ -82,15 +81,45 @@
     <div id="displayArea"></div>
 
     <script>
+        // Data sources
         const SHIPS_EN_JSON = 'https://raw.githubusercontent.com/KC3Kai/kc3-translations/master/data/en/ships.json';
         const STYPE_EN_JSON = 'https://raw.githubusercontent.com/KC3Kai/kc3-translations/master/data/en/stype.json';
         const MASTER_SHIPS_JSON = 'https://raw.githubusercontent.com/Tibowl/api_start2/master/parsed/api_mst_ship.json';
+
+        // WhoCallsTheFleet-DB NeDB files
+        const WCTF_SHIPS_NEDB = 'https://raw.githubusercontent.com/TeamFleet/WhoCallsTheFleet-DB/master/db/ships.nedb';
+        const WCTF_EXILLUSTS_NEDB = 'https://raw.githubusercontent.com/TeamFleet/WhoCallsTheFleet-DB/master/db/exillusts.nedb';
+        const WCTF_EXILLUST_TYPES_NEDB = 'https://raw.githubusercontent.com/TeamFleet/WhoCallsTheFleet-DB/master/db/exillust_types.nedb';
 
         let shipListEN = {};
         let stypeNames = [];
         let shipsByCustomCategory = {
             'BB': [], 'CV': [], 'CA': [], 'CL': [], 'DD': [], 'DE': [], 'SS': [], 'OTHER': []
         };
+
+        // Stores parsed WhoCallsTheFleet data
+        let wctfShipsMap = {};        // key: api_id -> ship object
+        let wctfExillustsMap = {};    // key: illust_extra_id -> exillust object
+        let wctfExillustTypesMap = {};// key: type_id -> exillust_type object
+
+        // Helper function to parse NeDB format (newline-delimited JSON)
+        async function fetchAndParseNeDB(url) {
+            const res = await fetch(url);
+            const text = await res.text();
+            const lines = text.split('\n');
+            const items = [];
+
+            for (const line of lines) {
+                if (line.trim()) {
+                    try {
+                        items.push(JSON.parse(line));
+                    } catch (e) {
+                        console.warn("Failed to parse NeDB line:", line);
+                    }
+                }
+            }
+            return items;
+        }
 
         function getCustomCategoryGroup(rawType) {
             if (!rawType) return 'OTHER';
@@ -148,18 +177,27 @@
 
         async function init() {
             const displayArea = document.getElementById('displayArea');
-            displayArea.innerHTML = "Loading KanColle ship database...";
+            displayArea.innerHTML = "Loading databases...";
 
             try {
-                const [shipsEnRes, stypeRes, masterRes] = await Promise.all([
+                // Fetch translation & master data + WhoCallsTheFleet NeDB files in parallel
+                const [shipsEnRes, stypeRes, masterRes, wctfShips, wctfExillusts, wctfExTypes] = await Promise.all([
                     fetch(SHIPS_EN_JSON),
                     fetch(STYPE_EN_JSON),
-                    fetch(MASTER_SHIPS_JSON)
+                    fetch(MASTER_SHIPS_JSON),
+                    fetchAndParseNeDB(WCTF_SHIPS_NEDB),
+                    fetchAndParseNeDB(WCTF_EXILLUSTS_NEDB),
+                    fetchAndParseNeDB(WCTF_EXILLUST_TYPES_NEDB)
                 ]);
 
                 shipListEN = await shipsEnRes.json();
                 stypeNames = await stypeRes.json();
                 const masterShips = await masterRes.json();
+
+                // Build lookup maps for WhoCallsTheFleet data
+                wctfShips.forEach(s => { if (s.id) wctfShipsMap[s.id] = s; });
+                wctfExillusts.forEach(ex => { if (ex.id) wctfExillustsMap[ex.id] = ex; });
+                wctfExTypes.forEach(t => { if (t.id) wctfExillustTypesMap[t.id] = t; });
 
                 masterShips.forEach(ship => {
                     const stypeId = ship.api_stype;
@@ -173,6 +211,7 @@
                         const exists = shipsByCustomCategory[targetGroup].some(s => s.jaName === jaName);
                         if (!exists) {
                             shipsByCustomCategory[targetGroup].push({
+                                api_id: ship.api_id,
                                 jaName: jaName,
                                 enName: shipInfo.enName,
                                 displayName: shipInfo.displayName
@@ -215,11 +254,11 @@
             shipsToDisplay.forEach(ship => {
                 let opt = document.createElement('option');
                 opt.value = ship.enName;
+                opt.dataset.apiId = ship.api_id;
                 opt.innerHTML = ship.displayName;
                 select.appendChild(opt);
             });
 
-            // Trigger seasonal fetch for initial ship
             onShipChange();
         }
 
@@ -228,70 +267,49 @@
             populateShipDropdown(selectedCategory || null);
         }
 
-        // --- MEDIAWIKI API INTEGRATION FOR SEASONAL CGs ---
-        async function onShipChange() {
-            const shipEnName = document.getElementById('shipSelect').value;
+        // --- STEP 1, 2, & 3: WHOCALLSTHEFLEET LOOKUP ROUTINE ---
+        function onShipChange() {
+            const select = document.getElementById('shipSelect');
+            const selectedOption = select.options[select.selectedIndex];
             const variantSelect = document.getElementById('variantSelect');
 
-            if (!shipEnName) {
+            if (!selectedOption) {
                 variantSelect.innerHTML = '<option value="">Default (Base CG)</option>';
                 return;
             }
 
-            variantSelect.innerHTML = '<option value="">Loading CGs...</option>';
+            const apiId = parseInt(selectedOption.dataset.apiId, 10);
+            const wctfShip = wctfShipsMap[apiId];
 
-            // Extract base ship name (e.g., "Fubuki" from "Fubuki_Kai_Ni")
-            const baseShipName = shipEnName.split('_')[0];
+            variantSelect.innerHTML = '<option value="">Default (Base CG)</option>';
 
-            try {
-                // Fetch images listed on the ship's Wiki Gallery page
-                const apiUrl = `https://en.kancollewiki.net/w/api.php?action=query&titles=${baseShipName}/Gallery&prop=images&imlimit=500&format=json&origin=*`;
-                const res = await fetch(apiUrl);
-                const data = await res.json();
+            // Step 1: Check if ship has illust_extra array
+            if (wctfShip && Array.isArray(wctfShip.illust_extra) && wctfShip.illust_extra.length > 0) {
                 
-                const pages = data.query ? data.query.pages : {};
-                const pageId = Object.keys(pages)[0];
-
-                const seasonalTags = new Set();
-
-                if (pageId && pageId !== "-1" && pages[pageId].images) {
-                    pages[pageId].images.forEach(imgObj => {
-                        const title = imgObj.title.replace("File:", "");
+                wctfShip.illust_extra.forEach(exId => {
+                    // Step 2: Look up ID in exillusts.nedb
+                    const exObj = wctfExillustsMap[exId];
+                    
+                    if (exObj && exObj.type) {
+                        // Step 3: Look up type ID in exillust_types.nedb
+                        const typeObj = wctfExillustTypesMap[exObj.type];
                         
-                        // Look for matching files (e.g. Ship_Full_Fubuki_Rainy.png, Ship_Full_Fubuki_Kai_Ni_Autumn_Casual.png)
-                        if (title.startsWith("Ship_") && title.includes(shipEnName)) {
-                            // Strip out standard prefixes & extensions
-                            let cleanName = title
-                                .replace(/\.(png|jpg|jpeg)$/i, '')
-                                .replace(/_Damaged$/i, '');
-
-                            // Remove format tag
-                            cleanName = cleanName.replace(/^Ship_(Full|Card|Banner)_/, '');
-
-                            // If there is extra text remaining after the ship name, it's a seasonal tag!
-                            if (cleanName.startsWith(shipEnName)) {
-                                const tag = cleanName.replace(shipEnName, '').replace(/^_+/, '');
-                                if (tag) {
-                                    seasonalTags.add(tag);
-                                }
+                        if (typeObj && typeObj.name) {
+                            // Extract English name (or fallback to Japanese name)
+                            const eventName = (typeObj.name.en || typeObj.name.ja || '').trim();
+                            
+                            if (eventName) {
+                                // Format name into Wiki filename tag (e.g., "Rainy Season" -> "Rainy_Season")
+                                const wikiTag = eventName.replace(/\s+/g, '_');
+                                
+                                const opt = document.createElement('option');
+                                opt.value = `_${wikiTag}`;
+                                opt.innerHTML = eventName;
+                                variantSelect.appendChild(opt);
                             }
                         }
-                    });
-                }
-
-                // Populate Variant Dropdown
-                variantSelect.innerHTML = '<option value="">Default (Base CG)</option>';
-                
-                Array.from(seasonalTags).sort().forEach(tag => {
-                    const opt = document.createElement('option');
-                    opt.value = `_${tag}`;
-                    opt.innerHTML = tag.replace(/_/g, ' ');
-                    variantSelect.appendChild(opt);
+                    }
                 });
-
-            } catch (err) {
-                console.warn("Could not query wiki seasonal CGs:", err);
-                variantSelect.innerHTML = '<option value="">Default (Base CG)</option>';
             }
         }
 
@@ -316,10 +334,10 @@
             }
 
             const type = document.getElementById('typeSelect').value;
-            const variant = document.getElementById('variantSelect').value; // e.g. "_Rainy" or ""
+            const variant = document.getElementById('variantSelect').value;
             const suffix = document.getElementById('versionSelect').value;
             
-            // Build final filename: Ship_{Type}_{ShipName}{Variant}{Damaged}.png
+            // Constructs: Ship_{Type}_{ShipName}{VariantTag}{DamagedSuffix}.png
             const fileName = `Ship_${type}_${engName}${variant}${suffix}.png`;
             const hash = md5(fileName);
             const url = `https://yksk.kancollewiki.net/w/images/${hash[0]}/${hash.substring(0, 2)}/${fileName}`;
@@ -339,7 +357,7 @@
                     displayArea.innerHTML = `<p style="color:red;">Asset not found for this combination (Filename checked: ${fileName}).</p>`;
                 }
             } catch (e) {
-                displayArea.innerHTML = `<p style="color:red;">Error connecting to Wiki.</p>`;
+                displayArea.innerHTML = `<p style="color:red;">Error connecting to Wiki server.</p>`;
             }
         });
 
