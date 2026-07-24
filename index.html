@@ -34,12 +34,20 @@
     <h2>KanColle Ship Asset Viewer</h2>
 
     <div class="controls">
-        <label>1. Filter by Ship Type:</label>
+        <label>1. Select Ship Type:</label>
         <select id="typeFilter" onchange="filterShipsByType()">
-            <option value="">-- All Ship Types --</option>
+            <option value="">-- All Ship Types (すべて) --</option>
+            <option value="BB">BB (Battleship / FBB / BBV)</option>
+            <option value="CV">CV (Carrier / CVB / CVL)</option>
+            <option value="CA">CA (Heavy Cruiser / CAV)</option>
+            <option value="CL">CL (Light Cruiser / CLT / CT)</option>
+            <option value="DD">DD (Destroyer)</option>
+            <option value="DE">DE (Coastal Defense Ship)</option>
+            <option value="SS">SS (Submarine / SSV)</option>
+            <option value="OTHER">OTHER (AV, LHA, AR, AS, AO, etc.)</option>
         </select>
 
-        <label>2. Select Ship:</label>
+        <label>2. Select Ship Form:</label>
         <select id="shipSelect"></select>
 
         <label>3. Asset Format:</label>
@@ -49,14 +57,10 @@
             <option value="Banner">Banner</option>
         </select>
 
-        <label>4. Version / State:</label>
+        <label>4. State:</label>
         <select id="versionSelect">
             <option value="">正常 (Normal)</option>
             <option value="_Damaged">中破 (Damaged)</option>
-            <option value="_Kai">改 (Kai)</option>
-            <option value="_Kai_Damaged">改中破 (Kai Damaged)</option>
-            <option value="_Kai_Ni">改二 (Kai Ni)</option>
-            <option value="_Kai_Ni_Damaged">改二中破 (Kai Ni Damaged)</option>
         </select>
         
         <button id="goBtn" style="background: #007aff; color: white; border: none; border-radius: 4px; font-weight: bold;">Go</button>
@@ -65,73 +69,167 @@
     <div id="displayArea"></div>
 
     <script>
-        const SHIPS_JSON = 'https://raw.githubusercontent.com/KC3Kai/kc3-translations/master/data/en/ships.json';
-        const STYPE_JSON = 'https://raw.githubusercontent.com/KC3Kai/kc3-translations/master/data/en/stype.json';
+        const SHIPS_EN_JSON = 'https://raw.githubusercontent.com/KC3Kai/kc3-translations/master/data/en/ships.json';
+        const STYPE_EN_JSON = 'https://raw.githubusercontent.com/KC3Kai/kc3-translations/master/data/en/stype.json';
+        const MASTER_SHIPS_JSON = 'https://raw.githubusercontent.com/Tibowl/api_start2/master/parsed/api_mst_ship.json';
 
-        let shipList = {};
-        let shipTypes = [];
+        let shipListEN = {};
+        let stypeNames = [];
+        let shipsByCustomCategory = {
+            'BB': [],
+            'CV': [],
+            'CA': [],
+            'CL': [],
+            'DD': [],
+            'DE': [],
+            'SS': [],
+            'OTHER': []
+        };
+
+        // Helper function to map official KC stype name to custom group
+        function getCustomCategoryGroup(rawType) {
+            if (!rawType) return 'OTHER';
+            const type = rawType.toUpperCase();
+
+            if (['BB', 'FBB', 'BBV'].includes(type)) return 'BB';
+            if (['CV', 'CVB', 'CVL'].includes(type)) return 'CV';
+            if (['CA', 'CAV'].includes(type)) return 'CA';
+            if (['CL', 'CLT', 'CT'].includes(type)) return 'CL';
+            if (['DD'].includes(type)) return 'DD';
+            if (['DE'].includes(type)) return 'DE';
+            if (['SS', 'SSV'].includes(type)) return 'SS';
+            if (['AV', 'LHA', 'AR', 'AS', 'AO'].includes(type)) return 'OTHER';
+
+            return 'OTHER';
+        }
+
+        // Convert Japanese ship form names (e.g. Fletcher改) to Wiki English filenames (Fletcher_Kai)
+        function getEnglishShipName(jaName) {
+            // Direct translation match if available
+            if (shipListEN[jaName]) {
+                return {
+                    enName: shipListEN[jaName].replace(/ /g, "_"),
+                    displayName: jaName
+                };
+            }
+
+            // Suffix conversions in order from longest to shortest match
+            const suffixRules = [
+                { jp: "航改二", enSuffix: "_Kou_Kai_Ni" },
+                { jp: "改二丙", enSuffix: "_Kai_Ni_C"   },
+                { jp: "改二甲", enSuffix: "_Kai_Ni_A"   },
+                { jp: "改二乙", enSuffix: "_Kai_Ni_B"   },
+                { jp: "改二丁", enSuffix: "_Kai_Ni_D"   },
+                { jp: "改三護", enSuffix: "_Kai_San_Go" },
+                { jp: "改三",   enSuffix: "_Kai_San"    },
+                { jp: "改二",   enSuffix: "_Kai_Ni"     },
+                { jp: "改",     enSuffix: "_Kai"        }
+            ];
+
+            for (const rule of suffixRules) {
+                if (jaName.endsWith(rule.jp)) {
+                    const baseJpName = jaName.slice(0, -rule.jp.length);
+                    const baseEnName = shipListEN[baseJpName] || baseJpName;
+                    
+                    return {
+                        enName: `${baseEnName.replace(/ /g, "_")}${rule.enSuffix}`,
+                        displayName: jaName
+                    };
+                }
+            }
+
+            // Fallback if no suffix matched
+            return {
+                enName: jaName.replace(/ /g, "_"),
+                displayName: jaName
+            };
+        }
 
         async function init() {
+            const displayArea = document.getElementById('displayArea');
+            displayArea.innerHTML = "Loading KanColle ship database...";
+
             try {
-                // Fetch ship list and ship type definitions in parallel
-                const [shipsRes, typesRes] = await Promise.all([
-                    fetch(SHIPS_JSON),
-                    fetch(STYPE_JSON)
+                // Fetch Master Game Data and Translations in Parallel
+                const [shipsEnRes, stypeRes, masterRes] = await Promise.all([
+                    fetch(SHIPS_EN_JSON),
+                    fetch(STYPE_EN_JSON),
+                    fetch(MASTER_SHIPS_JSON)
                 ]);
 
-                shipList = await shipsRes.json();
-                shipTypes = await typesRes.json();
+                shipListEN = await shipsEnRes.json();
+                stypeNames = await stypeRes.json();
+                const masterShips = await masterRes.json();
 
-                // Populate Ship Type filter dropdown (DD, CL, BB, CV, etc.)
-                const typeFilter = document.getElementById('typeFilter');
-                shipTypes.forEach((typeName, index) => {
-                    if (typeName && index > 0) {
-                        let opt = document.createElement('option');
-                        opt.value = typeName;
-                        opt.innerHTML = typeName;
-                        typeFilter.appendChild(opt);
+                // Group all ship forms into target custom categories
+                masterShips.forEach(ship => {
+                    const stypeId = ship.api_stype;
+                    const jaName = ship.api_name;
+                    const rawStypeName = stypeNames[stypeId] || '';
+
+                    // Filter out enemy ships & placeholders
+                    if (ship.api_id < 1500 && jaName && jaName !== "なし") {
+                        const targetGroup = getCustomCategoryGroup(rawStypeName);
+                        const shipInfo = getEnglishShipName(jaName);
+
+                        // Prevent duplicates
+                        const exists = shipsByCustomCategory[targetGroup].some(s => s.jaName === jaName);
+                        if (!exists) {
+                            shipsByCustomCategory[targetGroup].push({
+                                jaName: jaName,
+                                enName: shipInfo.enName,
+                                displayName: shipInfo.displayName
+                            });
+                        }
                     }
                 });
 
-                populateShipDropdown(shipList);
+                // Initial load: show all ships
+                populateShipDropdown(null);
+                displayArea.innerHTML = "";
 
             } catch (e) {
-                alert("Could not load ship or type data.");
+                console.error(e);
+                displayArea.innerHTML = "<p style='color:red;'>Could not load game data. Please refresh.</p>";
             }
         }
 
-        function populateShipDropdown(data) {
+        function populateShipDropdown(categoryGroup) {
             const select = document.getElementById('shipSelect');
             select.innerHTML = '';
-            for (const jaName in data) {
-                let opt = document.createElement('option');
-                opt.value = data[jaName].replace(/ /g, "_");
-                opt.innerHTML = `${jaName} (${data[jaName]})`;
-                select.appendChild(opt);
+
+            let shipsToDisplay = [];
+
+            if (categoryGroup) {
+                shipsToDisplay = shipsByCustomCategory[categoryGroup] || [];
+            } else {
+                // Combine all categories
+                const allShips = [];
+                Object.values(shipsByCustomCategory).forEach(list => allShips.push(...list));
+                
+                // Deduplicate
+                const seen = new Set();
+                shipsToDisplay = allShips.filter(s => {
+                    if (seen.has(s.jaName)) return false;
+                    seen.add(s.jaName);
+                    return true;
+                });
             }
+
+            // Sort alphabetically by Japanese Name
+            shipsToDisplay.sort((a, b) => a.jaName.localeCompare(b.jaName, 'ja'));
+
+            shipsToDisplay.forEach(ship => {
+                let opt = document.createElement('option');
+                opt.value = ship.enName;
+                opt.innerHTML = ship.displayName;
+                select.appendChild(opt);
+            });
         }
 
         function filterShipsByType() {
-            const selectedType = document.getElementById('typeFilter').value.toLowerCase();
-            const select = document.getElementById('shipSelect');
-            select.innerHTML = '';
-
-            for (const jaName in shipList) {
-                const enName = shipList[jaName];
-                // If no filter selected, show all; otherwise check if english name/type matches
-                if (!selectedType) {
-                    let opt = document.createElement('option');
-                    opt.value = enName.replace(/ /g, "_");
-                    opt.innerHTML = `${jaName} (${enName})`;
-                    select.appendChild(opt);
-                } else {
-                    // Match type keyword against ship list
-                    let opt = document.createElement('option');
-                    opt.value = enName.replace(/ /g, "_");
-                    opt.innerHTML = `${jaName} (${enName})`;
-                    select.appendChild(opt);
-                }
-            }
+            const selectedCategory = document.getElementById('typeFilter').value;
+            populateShipDropdown(selectedCategory || null);
         }
 
         async function openChatGPTWallpaper(imageUrl) {
@@ -149,6 +247,11 @@
 
         document.getElementById('goBtn').addEventListener('click', async () => {
             const engName = document.getElementById('shipSelect').value;
+            if (!engName) {
+                alert("Please select a ship first!");
+                return;
+            }
+
             const type = document.getElementById('typeSelect').value;
             const suffix = document.getElementById('versionSelect').value;
             
