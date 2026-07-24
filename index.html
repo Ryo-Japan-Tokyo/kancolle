@@ -7,8 +7,22 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/blueimp-md5/2.19.0/js/md5.min.js"></script>
     <style>
         body { font-family: sans-serif; display: flex; flex-direction: column; align-items: center; padding: 40px; background-color: #f4f4f9; }
-        .controls { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); display: flex; flex-direction: column; width: 100%; max-width: 400px; }
-        select, button { padding: 10px; margin: 5px 0; cursor: pointer; font-size: 16px; }
+        .controls { 
+            background: white; 
+            padding: 15px 20px; 
+            border-radius: 8px; 
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1); 
+            display: flex; 
+            flex-direction: row; 
+            align-items: center; 
+            gap: 10px; 
+            width: 100%; 
+            max-width: 950px; 
+            flex-wrap: wrap;
+        }
+        select, button { padding: 8px 12px; cursor: pointer; font-size: 14px; border: 1px solid #ccc; border-radius: 4px; }
+        #shipSelect { flex-grow: 1; min-width: 150px; }
+        #variantSelect { min-width: 150px; max-width: 200px; }
         #displayArea { margin-top: 30px; text-align: center; width: 100%; }
         img { max-width: 100%; height: auto; border: 3px solid #fff; box-shadow: 0 4px 10px rgba(0,0,0,0.2); border-radius: 8px; }
         .url-box { margin-top: 15px; font-size: 0.9em; color: #555; word-break: break-all; background: #eee; padding: 10px; border-radius: 4px; text-align: left; }
@@ -26,44 +40,43 @@
             box-shadow: 0 2px 6px rgba(0,0,0,0.15);
         }
         .btn-wallpaper:hover { opacity: 0.95; }
-        label { font-size: 12px; color: #666; margin-top: 5px; }
+        .loading-text { font-size: 12px; color: #007aff; }
     </style>
 </head>
 <body>
 
-    <h2>KanColle Ship Asset Viewer</h2>
-
     <div class="controls">
-        <label>1. Select Ship Type:</label>
         <select id="typeFilter" onchange="filterShipsByType()">
-            <option value="">-- All Ship Types (すべて) --</option>
-            <option value="BB">BB (Battleship / FBB / BBV)</option>
-            <option value="CV">CV (Carrier / CVB / CVL)</option>
-            <option value="CA">CA (Heavy Cruiser / CAV)</option>
-            <option value="CL">CL (Light Cruiser / CLT / CT)</option>
-            <option value="DD">DD (Destroyer)</option>
-            <option value="DE">DE (Coastal Defense Ship)</option>
-            <option value="SS">SS (Submarine / SSV)</option>
-            <option value="OTHER">OTHER (AV, LHA, AR, AS, AO, etc.)</option>
+            <option value="">ALL</option>
+            <option value="BB">BB</option>
+            <option value="CV">CV</option>
+            <option value="CA">CA</option>
+            <option value="CL">CL</option>
+            <option value="DD">DD</option>
+            <option value="DE">DE</option>
+            <option value="SS">SS</option>
+            <option value="OTHER">OTHER</option>
         </select>
 
-        <label>2. Select Ship Form:</label>
-        <select id="shipSelect"></select>
+        <select id="shipSelect" onchange="onShipChange()"></select>
 
-        <label>3. Asset Format:</label>
+        <!-- Dynamic Seasonal / Variant CG Dropdown -->
+        <select id="variantSelect">
+            <option value="">Default (Base CG)</option>
+        </select>
+
         <select id="typeSelect">
             <option value="Card">Card</option>
-            <option value="Full">Full</option>
+            <option value="Full" selected>Full</option>
             <option value="Banner">Banner</option>
         </select>
 
-        <label>4. State:</label>
         <select id="versionSelect">
             <option value="">正常 (Normal)</option>
-            <option value="_Damaged">中破 (Damaged)</option>
+            <option value="_Damaged" selected>中破 (Damaged)</option>
         </select>
         
-        <button id="goBtn" style="background: #007aff; color: white; border: none; border-radius: 4px; font-weight: bold;">Go</button>
+        <button id="goBtn" style="background: #007aff; color: white; border: none; font-weight: bold;">Go</button>
     </div>
 
     <div id="displayArea"></div>
@@ -76,17 +89,9 @@
         let shipListEN = {};
         let stypeNames = [];
         let shipsByCustomCategory = {
-            'BB': [],
-            'CV': [],
-            'CA': [],
-            'CL': [],
-            'DD': [],
-            'DE': [],
-            'SS': [],
-            'OTHER': []
+            'BB': [], 'CV': [], 'CA': [], 'CL': [], 'DD': [], 'DE': [], 'SS': [], 'OTHER': []
         };
 
-        // Helper function to map official KC stype name to custom group
         function getCustomCategoryGroup(rawType) {
             if (!rawType) return 'OTHER';
             const type = rawType.toUpperCase();
@@ -103,9 +108,7 @@
             return 'OTHER';
         }
 
-        // Convert Japanese ship form names (e.g. Fletcher改) to Wiki English filenames (Fletcher_Kai)
         function getEnglishShipName(jaName) {
-            // Direct translation match if available
             if (shipListEN[jaName]) {
                 return {
                     enName: shipListEN[jaName].replace(/ /g, "_"),
@@ -113,7 +116,6 @@
                 };
             }
 
-            // Suffix conversions in order from longest to shortest match
             const suffixRules = [
                 { jp: "航改二", enSuffix: "_Kou_Kai_Ni" },
                 { jp: "改二丙", enSuffix: "_Kai_Ni_C"   },
@@ -138,7 +140,6 @@
                 }
             }
 
-            // Fallback if no suffix matched
             return {
                 enName: jaName.replace(/ /g, "_"),
                 displayName: jaName
@@ -150,7 +151,6 @@
             displayArea.innerHTML = "Loading KanColle ship database...";
 
             try {
-                // Fetch Master Game Data and Translations in Parallel
                 const [shipsEnRes, stypeRes, masterRes] = await Promise.all([
                     fetch(SHIPS_EN_JSON),
                     fetch(STYPE_EN_JSON),
@@ -161,18 +161,15 @@
                 stypeNames = await stypeRes.json();
                 const masterShips = await masterRes.json();
 
-                // Group all ship forms into target custom categories
                 masterShips.forEach(ship => {
                     const stypeId = ship.api_stype;
                     const jaName = ship.api_name;
                     const rawStypeName = stypeNames[stypeId] || '';
 
-                    // Filter out enemy ships & placeholders
                     if (ship.api_id < 1500 && jaName && jaName !== "なし") {
                         const targetGroup = getCustomCategoryGroup(rawStypeName);
                         const shipInfo = getEnglishShipName(jaName);
 
-                        // Prevent duplicates
                         const exists = shipsByCustomCategory[targetGroup].some(s => s.jaName === jaName);
                         if (!exists) {
                             shipsByCustomCategory[targetGroup].push({
@@ -184,7 +181,6 @@
                     }
                 });
 
-                // Initial load: show all ships
                 populateShipDropdown(null);
                 displayArea.innerHTML = "";
 
@@ -203,11 +199,9 @@
             if (categoryGroup) {
                 shipsToDisplay = shipsByCustomCategory[categoryGroup] || [];
             } else {
-                // Combine all categories
                 const allShips = [];
                 Object.values(shipsByCustomCategory).forEach(list => allShips.push(...list));
                 
-                // Deduplicate
                 const seen = new Set();
                 shipsToDisplay = allShips.filter(s => {
                     if (seen.has(s.jaName)) return false;
@@ -216,7 +210,6 @@
                 });
             }
 
-            // Sort alphabetically by Japanese Name
             shipsToDisplay.sort((a, b) => a.jaName.localeCompare(b.jaName, 'ja'));
 
             shipsToDisplay.forEach(ship => {
@@ -225,11 +218,81 @@
                 opt.innerHTML = ship.displayName;
                 select.appendChild(opt);
             });
+
+            // Trigger seasonal fetch for initial ship
+            onShipChange();
         }
 
         function filterShipsByType() {
             const selectedCategory = document.getElementById('typeFilter').value;
             populateShipDropdown(selectedCategory || null);
+        }
+
+        // --- MEDIAWIKI API INTEGRATION FOR SEASONAL CGs ---
+        async function onShipChange() {
+            const shipEnName = document.getElementById('shipSelect').value;
+            const variantSelect = document.getElementById('variantSelect');
+
+            if (!shipEnName) {
+                variantSelect.innerHTML = '<option value="">Default (Base CG)</option>';
+                return;
+            }
+
+            variantSelect.innerHTML = '<option value="">Loading CGs...</option>';
+
+            // Extract base ship name (e.g., "Fubuki" from "Fubuki_Kai_Ni")
+            const baseShipName = shipEnName.split('_')[0];
+
+            try {
+                // Fetch images listed on the ship's Wiki Gallery page
+                const apiUrl = `https://en.kancollewiki.net/w/api.php?action=query&titles=${baseShipName}/Gallery&prop=images&imlimit=500&format=json&origin=*`;
+                const res = await fetch(apiUrl);
+                const data = await res.json();
+                
+                const pages = data.query ? data.query.pages : {};
+                const pageId = Object.keys(pages)[0];
+
+                const seasonalTags = new Set();
+
+                if (pageId && pageId !== "-1" && pages[pageId].images) {
+                    pages[pageId].images.forEach(imgObj => {
+                        const title = imgObj.title.replace("File:", "");
+                        
+                        // Look for matching files (e.g. Ship_Full_Fubuki_Rainy.png, Ship_Full_Fubuki_Kai_Ni_Autumn_Casual.png)
+                        if (title.startsWith("Ship_") && title.includes(shipEnName)) {
+                            // Strip out standard prefixes & extensions
+                            let cleanName = title
+                                .replace(/\.(png|jpg|jpeg)$/i, '')
+                                .replace(/_Damaged$/i, '');
+
+                            // Remove format tag
+                            cleanName = cleanName.replace(/^Ship_(Full|Card|Banner)_/, '');
+
+                            // If there is extra text remaining after the ship name, it's a seasonal tag!
+                            if (cleanName.startsWith(shipEnName)) {
+                                const tag = cleanName.replace(shipEnName, '').replace(/^_+/, '');
+                                if (tag) {
+                                    seasonalTags.add(tag);
+                                }
+                            }
+                        }
+                    });
+                }
+
+                // Populate Variant Dropdown
+                variantSelect.innerHTML = '<option value="">Default (Base CG)</option>';
+                
+                Array.from(seasonalTags).sort().forEach(tag => {
+                    const opt = document.createElement('option');
+                    opt.value = `_${tag}`;
+                    opt.innerHTML = tag.replace(/_/g, ' ');
+                    variantSelect.appendChild(opt);
+                });
+
+            } catch (err) {
+                console.warn("Could not query wiki seasonal CGs:", err);
+                variantSelect.innerHTML = '<option value="">Default (Base CG)</option>';
+            }
         }
 
         async function openChatGPTWallpaper(imageUrl) {
@@ -253,9 +316,11 @@
             }
 
             const type = document.getElementById('typeSelect').value;
+            const variant = document.getElementById('variantSelect').value; // e.g. "_Rainy" or ""
             const suffix = document.getElementById('versionSelect').value;
             
-            const fileName = `Ship_${type}_${engName}${suffix}.png`;
+            // Build final filename: Ship_{Type}_{ShipName}{Variant}{Damaged}.png
+            const fileName = `Ship_${type}_${engName}${variant}${suffix}.png`;
             const hash = md5(fileName);
             const url = `https://yksk.kancollewiki.net/w/images/${hash[0]}/${hash.substring(0, 2)}/${fileName}`;
             
@@ -271,7 +336,7 @@
                         <button class="btn-wallpaper" onclick="openChatGPTWallpaper('${url}')">🎨 Generate Background with ChatGPT</button>
                     `;
                 } else {
-                    displayArea.innerHTML = `<p style="color:red;">Asset not found for this version.</p>`;
+                    displayArea.innerHTML = `<p style="color:red;">Asset not found for this combination (Filename checked: ${fileName}).</p>`;
                 }
             } catch (e) {
                 displayArea.innerHTML = `<p style="color:red;">Error connecting to Wiki.</p>`;
