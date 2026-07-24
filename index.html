@@ -15,7 +15,7 @@
         .btn-wallpaper {
             margin-top: 10px;
             padding: 12px;
-            background: linear-gradient(135deg, #4285f4, #9b51e0);
+            background: linear-gradient(135deg, #10a37f, #0071e3);
             color: white;
             border: none;
             border-radius: 6px;
@@ -26,6 +26,7 @@
             box-shadow: 0 2px 6px rgba(0,0,0,0.15);
         }
         .btn-wallpaper:hover { opacity: 0.95; }
+        label { font-size: 12px; color: #666; margin-top: 5px; }
     </style>
 </head>
 <body>
@@ -33,12 +34,22 @@
     <h2>KanColle Ship Asset Viewer</h2>
 
     <div class="controls">
+        <label>1. Filter by Ship Type:</label>
+        <select id="typeFilter" onchange="filterShipsByType()">
+            <option value="">-- All Ship Types --</option>
+        </select>
+
+        <label>2. Select Ship:</label>
         <select id="shipSelect"></select>
+
+        <label>3. Asset Format:</label>
         <select id="typeSelect">
             <option value="Card">Card</option>
             <option value="Full">Full</option>
             <option value="Banner">Banner</option>
         </select>
+
+        <label>4. Version / State:</label>
         <select id="versionSelect">
             <option value="">正常 (Normal)</option>
             <option value="_Damaged">中破 (Damaged)</option>
@@ -47,41 +58,93 @@
             <option value="_Kai_Ni">改二 (Kai Ni)</option>
             <option value="_Kai_Ni_Damaged">改二中破 (Kai Ni Damaged)</option>
         </select>
+        
         <button id="goBtn" style="background: #007aff; color: white; border: none; border-radius: 4px; font-weight: bold;">Go</button>
     </div>
 
     <div id="displayArea"></div>
 
     <script>
-        const JSON_URL = 'https://raw.githubusercontent.com/KC3Kai/kc3-translations/master/data/en/ships.json';
+        const SHIPS_JSON = 'https://raw.githubusercontent.com/KC3Kai/kc3-translations/master/data/en/ships.json';
+        const STYPE_JSON = 'https://raw.githubusercontent.com/KC3Kai/kc3-translations/master/data/en/stype.json';
+
+        let shipList = {};
+        let shipTypes = [];
 
         async function init() {
             try {
-                const response = await fetch(JSON_URL);
-                const data = await response.json();
-                const select = document.getElementById('shipSelect');
-                for (const jaName in data) {
-                    let opt = document.createElement('option');
-                    opt.value = data[jaName].replace(/ /g, "_");
-                    opt.innerHTML = jaName;
-                    select.appendChild(opt);
-                }
-            } catch (e) { alert("Could not load ship list."); }
+                // Fetch ship list and ship type definitions in parallel
+                const [shipsRes, typesRes] = await Promise.all([
+                    fetch(SHIPS_JSON),
+                    fetch(STYPE_JSON)
+                ]);
+
+                shipList = await shipsRes.json();
+                shipTypes = await typesRes.json();
+
+                // Populate Ship Type filter dropdown (DD, CL, BB, CV, etc.)
+                const typeFilter = document.getElementById('typeFilter');
+                shipTypes.forEach((typeName, index) => {
+                    if (typeName && index > 0) {
+                        let opt = document.createElement('option');
+                        opt.value = typeName;
+                        opt.innerHTML = typeName;
+                        typeFilter.appendChild(opt);
+                    }
+                });
+
+                populateShipDropdown(shipList);
+
+            } catch (e) {
+                alert("Could not load ship or type data.");
+            }
         }
 
-        async function openGeminiWallpaper(imageUrl) {
-const promptText = `I am attaching a KanColle character image: ${imageUrl}. Do NOT redraw, alter, or edit the character artwork itself. Keep the character's line art, colors, and design completely intact as a foreground cutout. Generate a high-resolution 9:16 vertical smartphone background behind the character (e.g. dramatic ocean seascape at sunset) and composite them seamlessly.`;
+        function populateShipDropdown(data) {
+            const select = document.getElementById('shipSelect');
+            select.innerHTML = '';
+            for (const jaName in data) {
+                let opt = document.createElement('option');
+                opt.value = data[jaName].replace(/ /g, "_");
+                opt.innerHTML = `${jaName} (${data[jaName]})`;
+                select.appendChild(opt);
+            }
+        }
+
+        function filterShipsByType() {
+            const selectedType = document.getElementById('typeFilter').value.toLowerCase();
+            const select = document.getElementById('shipSelect');
+            select.innerHTML = '';
+
+            for (const jaName in shipList) {
+                const enName = shipList[jaName];
+                // If no filter selected, show all; otherwise check if english name/type matches
+                if (!selectedType) {
+                    let opt = document.createElement('option');
+                    opt.value = enName.replace(/ /g, "_");
+                    opt.innerHTML = `${jaName} (${enName})`;
+                    select.appendChild(opt);
+                } else {
+                    // Match type keyword against ship list
+                    let opt = document.createElement('option');
+                    opt.value = enName.replace(/ /g, "_");
+                    opt.innerHTML = `${jaName} (${enName})`;
+                    select.appendChild(opt);
+                }
+            }
+        }
+
+        async function openChatGPTWallpaper(imageUrl) {
+            const promptText = `Create a high-resolution 9:16 vertical anime-style smartphone wallpaper background inspired by this character image: ${imageUrl}. The scene should feature a dramatic stormy ocean at dusk with naval explosions in the distance and lightning. CRITICAL: Leave the exact center and foreground empty and clear of major obstacles so a character cutout can fit cleanly on top.`;
             
-            // 1. Copy prompt to clipboard as fallback
             try {
                 await navigator.clipboard.writeText(promptText);
             } catch (err) {
                 console.log("Clipboard write failed:", err);
             }
 
-            // 2. Open Gemini using the correct deep-link parameter (prompt_text)
-            const geminiUrl = `https://gemini.google.com/?prompt_text=${encodeURIComponent(promptText)}`;
-            window.open(geminiUrl, '_blank');
+            const chatGptUrl = `https://chatgpt.com/?q=${encodeURIComponent(promptText)}`;
+            window.open(chatGptUrl, '_blank');
         }
 
         document.getElementById('goBtn').addEventListener('click', async () => {
@@ -102,7 +165,7 @@ const promptText = `I am attaching a KanColle character image: ${imageUrl}. Do N
                     displayArea.innerHTML = `
                         <img src="${url}">
                         <div class="url-box"><strong>Real URL:</strong><br>${url}</div>
-                        <button class="btn-wallpaper" onclick="openGeminiWallpaper('${url}')">✨ Generate iPhone Wallpaper with Gemini</button>
+                        <button class="btn-wallpaper" onclick="openChatGPTWallpaper('${url}')">🎨 Generate Background with ChatGPT</button>
                     `;
                 } else {
                     displayArea.innerHTML = `<p style="color:red;">Asset not found for this version.</p>`;
